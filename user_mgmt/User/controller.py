@@ -8,6 +8,7 @@ import redis
 from db.mash import UserSchema
 from marshmallow import ValidationError
 from flask.json import jsonify
+import time
 
 import bcrypt
 
@@ -17,6 +18,7 @@ from library.delete_redis import Delete_redis_keys_with_prefix
 from library.hassed_pass import hash_password
 from library.pagination import calculate_pagination
 from library.constant import ROLE
+from db.model import db
 
 from kafka1.producer import KafkaProducer
 
@@ -54,16 +56,27 @@ class Get_user:
         if cached_data:
             return jsonify(json.loads(cached_data))
 
-        user_data = []
 
         if current_user['role'] == ROLE.ADMIN:
+            start_time = time.time()
             # Admin có quyền xem tất cả danh sách
             users_query = User.select().order_by(User.id)
             # nếu có thêm 'name_user'
             users_query = apply_name_condition(users_query, name_user)
-
+            query_sql = users_query.sql()
             total_users = users_query.count()
-            users = users_query.order_by(User.id).limit(per_page).offset((per_page * page) - per_page)
+
+            users = users_query.limit(per_page).offset((per_page * page) - per_page)
+
+            print(query_sql)
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+
+            user_schema = UserSchema(many=True)  # Đặt many=True nếu users là danh sách
+            users_json = user_schema.dump(users)
+
+            # users_query = users_query.execute()
+
             note = 'bạn có thể xem toàn bộ danh sách'
 
         elif current_user['role'] == ROLE.MANAGER:
@@ -95,43 +108,23 @@ class Get_user:
             users = (User.select().where(User.id == current_user['id']))
             note = 'bạn chỉ có thể xem thông tin của bản thân'
         #
-        for u in users:
-            user_dict = model_to_dict(u, exclude=[User.password])
-            user_data.append(user_dict)
 
         if total_users == 0:
             return {
                 'users': {},
             }
-
-        # Tính toán phân trang
         pagination_info = calculate_pagination(total_users, page, per_page)
 
-        # if total_users % per_page != 0:
-        #     total_pages = (total_users // per_page) + 1
-        # if total_users % per_page == 0:
-        #     total_pages = total_users // per_page
-        # if page > total_pages:
-        #     return jsonify('Invalid pagination parameters')
-        # if page < 1:
-        #     return jsonify('Invalid pagination parameters')
-        #
-        # next_page = page + 1
-        # if next_page > total_pages:
-        #     next_page = 'null'
-        # prev_page = page - 1
-        # if prev_page == 0:
-        #     prev_page = 'null'
-        ##
-
-        if user_data:
+        if users:
             data = {
-                'users': user_data,
+                'users': users_json,
                 'note': note,
-                'current_record': len(user_data),
+                'current_record': len(users_json),
                 'current_page': page,
                 'total_users': total_users,
-                **pagination_info
+                **pagination_info,
+                "elapsed_time": elapsed_time
+
             }
             r.set(key_list_users, json.dumps(data))
 
@@ -217,15 +210,14 @@ class Update_user:
             except ValidationError as e:
                 return jsonify({"message": "Invalid input data", "errors": e.messages}), 400
 
-            if current_user['role'] != 1 and 'role' in data:
+            if current_user['role'] != ROLE.ADMIN and 'role' in data:
                 return jsonify({'error': 'Only admin can update the role'}), 403
 
-            if user_data.id != current_user['id'] and 'password' in data:
-                return jsonify({'error': 'Can not update the password'}), 403
-
-            if user_data.id == current_user['id'] and 'password' in data:
+            if (user_data.id == current_user['id'] or current_user['role'] == ROLE.ADMIN) and 'password' in data:
                 hashed_password_result = hash_password(password)
                 data['password'] = hashed_password_result
+            else:
+                return jsonify({'error': 'Can not update the password'}), 403
 
             data_update = {"id": user_id,
                            "updated_by": current_user['name']
