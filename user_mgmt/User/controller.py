@@ -88,6 +88,8 @@ class Get_user:
 
             total_users = users_query.count()
             users = users_query.order_by(User.id).limit(per_page).offset((per_page * page) - per_page)
+            user_schema = UserSchema(many=True)  # Đặt many=True nếu users là danh sách
+            users_json = user_schema.dump(users)
             note = 'bạn có thể xem danh sách bao gồm Leader và User'
 
         elif current_user['role'] == ROLE.LEADER:
@@ -100,12 +102,16 @@ class Get_user:
 
             total_users = users_query.count()
             users = users_query.order_by(User.id).limit(per_page).offset((per_page * page) - per_page)
+            user_schema = UserSchema(many=True)  # Đặt many=True nếu users là danh sách
+            users_json = user_schema.dump(users)
             note = 'bạn có thể xem danh sách thành viên trong Team của bạn'
 
         else:
             # User chỉ xem thông tin của bản thân mình
             total_users = 1
             users = (User.select().where(User.id == current_user['id']))
+            user_schema = UserSchema(many=True)  # Đặt many=True nếu users là danh sách
+            users_json = user_schema.dump(users)
             note = 'bạn chỉ có thể xem thông tin của bản thân'
         #
 
